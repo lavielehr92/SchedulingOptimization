@@ -483,7 +483,7 @@ with tab1:
     
     selected_subject = st.selectbox(
         "Select subject to analyze",
-        options=list(TEACHER_TYPES.keys())
+        options=list(st.session_state.custom_rules.keys())
     )
     
     teacher_type = get_teacher_type_rules(selected_subject)
@@ -621,25 +621,27 @@ with tab2:
     
     st.divider()
     
-    with st.expander("View Teacher Type Rules"):
+    with st.expander("View Current Subject Rules"):
         rules_data = []
-        for name, tt in TEACHER_TYPES.items():
+        for name, rules in st.session_state.custom_rules.items():
             rules_data.append({
                 "Type": name,
-                "Can Travel": "Yes" if tt.is_traveling else "No",
-                "Max/Day": tt.max_periods_per_day,
-                "Max Consecutive": tt.max_consecutive_periods,
-                "Special Room": tt.room_type if tt.requires_special_room else "No",
-                "Travel Buffer": tt.min_break_between_travel
+                "Can Travel": "Yes" if rules['is_traveling'] else "No",
+                "Max/Day": rules['max_periods_per_day'],
+                "Max Consecutive": rules['max_consecutive_periods'],
+                "Special Room": rules['room_type'] if rules['requires_special_room'] else "No",
+                "Travel Buffer": rules['min_break_between_travel']
             })
         st.dataframe(pd.DataFrame(rules_data), use_container_width=True, hide_index=True)
+        st.caption("To add or edit subjects, go to the 'Subject Rules' tab")
     
     with st.form("add_teacher"):
         col1, col2, col3 = st.columns(3)
         with col1:
             teacher_name = st.text_input("Teacher Name", placeholder="e.g., Mrs. Johnson")
         with col2:
-            teacher_type_select = st.selectbox("Teacher Type", options=list(TEACHER_TYPES.keys()))
+            # Use dynamic subject list from custom_rules
+            teacher_type_select = st.selectbox("Teacher Type", options=list(st.session_state.custom_rules.keys()))
         with col3:
             home_campus = st.selectbox("Home Campus", options=["Both (Traveling)", "58th Street", "Baltimore Ave"])
         
@@ -708,11 +710,11 @@ with tab3:
     
     st.markdown("""
     Customize the scheduling rules for each subject type. These rules control how teachers 
-    of each type are scheduled across both campuses.
+    of each type are scheduled across both campuses. You can also add new subjects or remove existing ones.
     """)
     
     # Display all rules in editable table format
-    st.markdown("### Current Rules by Subject")
+    st.markdown("### Current Subjects")
     
     # Create a dataframe of current rules
     rules_display = []
@@ -728,6 +730,72 @@ with tab3:
         })
     
     st.dataframe(pd.DataFrame(rules_display), use_container_width=True, hide_index=True)
+    
+    st.divider()
+    
+    # Add new subject section
+    st.markdown("### Add New Subject")
+    
+    with st.form("add_subject_form"):
+        new_subject_name = st.text_input("Subject Name", placeholder="e.g., Drama, Computer Science, Health")
+        
+        add_col1, add_col2 = st.columns(2)
+        
+        with add_col1:
+            new_traveling = st.checkbox("Can travel between campuses", value=True)
+            new_max_periods = st.number_input("Max periods per day", min_value=1, max_value=10, value=6)
+            new_max_consecutive = st.number_input("Max consecutive periods", min_value=1, max_value=6, value=3)
+        
+        with add_col2:
+            new_special_room = st.checkbox("Requires special room", value=False)
+            new_room_type = st.selectbox(
+                "Room type needed",
+                options=["classroom", "gym", "art", "music", "lab", "library", "chapel", "theater", "computer lab"]
+            )
+            new_travel_buffer = st.number_input("Buffer periods after travel", min_value=0, max_value=3, value=1)
+        
+        if st.form_submit_button("Add Subject", type="primary", use_container_width=True):
+            if new_subject_name:
+                if new_subject_name in st.session_state.custom_rules:
+                    st.error(f"Subject '{new_subject_name}' already exists!")
+                else:
+                    st.session_state.custom_rules[new_subject_name] = {
+                        "is_traveling": new_traveling,
+                        "max_periods_per_day": new_max_periods,
+                        "max_consecutive_periods": new_max_consecutive,
+                        "requires_special_room": new_special_room,
+                        "room_type": new_room_type,
+                        "min_break_between_travel": new_travel_buffer
+                    }
+                    st.success(f"Subject '{new_subject_name}' added!")
+                    st.rerun()
+            else:
+                st.error("Please enter a subject name")
+    
+    st.divider()
+    
+    # Remove subject section
+    st.markdown("### Remove Subject")
+    
+    remove_col1, remove_col2 = st.columns([3, 1])
+    with remove_col1:
+        subject_to_remove = st.selectbox(
+            "Select subject to remove",
+            options=list(st.session_state.custom_rules.keys()),
+            key="remove_subject_select"
+        )
+    with remove_col2:
+        st.write("")  # Spacing
+        st.write("")  # Spacing
+        if st.button("Remove Subject", type="secondary", use_container_width=True):
+            # Check if any teachers are using this subject
+            teachers_using = [t['name'] for t in st.session_state.teachers if t.get('type') == subject_to_remove]
+            if teachers_using:
+                st.error(f"Cannot remove '{subject_to_remove}' - it's assigned to: {', '.join(teachers_using)}")
+            else:
+                del st.session_state.custom_rules[subject_to_remove]
+                st.success(f"Subject '{subject_to_remove}' removed!")
+                st.rerun()
     
     st.divider()
     
@@ -766,10 +834,11 @@ with tab3:
                 "Requires special room",
                 value=current_rules['requires_special_room']
             )
+            room_options = ["classroom", "gym", "art", "music", "lab", "library", "chapel", "theater", "computer lab"]
             edit_room_type = st.selectbox(
                 "Room type needed",
-                options=["classroom", "gym", "art", "music", "lab", "library", "chapel"],
-                index=["classroom", "gym", "art", "music", "lab", "library", "chapel"].index(current_rules['room_type']) if current_rules['room_type'] in ["classroom", "gym", "art", "music", "lab", "library", "chapel"] else 0
+                options=room_options,
+                index=room_options.index(current_rules['room_type']) if current_rules['room_type'] in room_options else 0
             )
             edit_travel_buffer = st.number_input(
                 "Buffer periods after travel",
@@ -793,46 +862,100 @@ with tab3:
         
         with submit_col2:
             if st.form_submit_button("Reset to Default", use_container_width=True):
-                st.session_state.custom_rules[edit_subject] = DEFAULT_TEACHER_RULES[edit_subject].copy()
-                st.success(f"Rules for {edit_subject} reset to defaults!")
-                st.rerun()
+                if edit_subject in DEFAULT_TEACHER_RULES:
+                    st.session_state.custom_rules[edit_subject] = DEFAULT_TEACHER_RULES[edit_subject].copy()
+                    st.success(f"Rules for {edit_subject} reset to defaults!")
+                    st.rerun()
+                else:
+                    st.warning(f"No default rules for '{edit_subject}' - this is a custom subject")
     
     st.divider()
     
-    # Reset all rules
-    col1, col2 = st.columns(2)
+    # Reset and export section
+    st.markdown("### Manage All Subjects")
+    
+    col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("Reset ALL Rules to Defaults", type="secondary", use_container_width=True):
+        if st.button("Reset to Default Subjects", type="secondary", use_container_width=True):
             st.session_state.custom_rules = {k: v.copy() for k, v in DEFAULT_TEACHER_RULES.items()}
-            st.success("All rules reset to defaults!")
+            st.success("All subjects reset to defaults!")
             st.rerun()
     
     with col2:
         # Export rules as JSON
         rules_json = json.dumps(st.session_state.custom_rules, indent=2)
         st.download_button(
-            "Download Rules (JSON)",
+            "Download Subjects (JSON)",
             data=rules_json,
             file_name="cca_subject_rules.json",
             mime="application/json",
             use_container_width=True
         )
     
+    with col3:
+        # Export as CSV
+        rules_csv_data = []
+        for subject, rules in st.session_state.custom_rules.items():
+            rules_csv_data.append({
+                "subject": subject,
+                "is_traveling": rules['is_traveling'],
+                "max_periods_per_day": rules['max_periods_per_day'],
+                "max_consecutive_periods": rules['max_consecutive_periods'],
+                "requires_special_room": rules['requires_special_room'],
+                "room_type": rules['room_type'],
+                "min_break_between_travel": rules['min_break_between_travel']
+            })
+        rules_csv = pd.DataFrame(rules_csv_data).to_csv(index=False)
+        st.download_button(
+            "Download Subjects (CSV)",
+            data=rules_csv,
+            file_name="cca_subject_rules.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    
     # Import rules
-    st.markdown("### Import Custom Rules")
-    uploaded_rules = st.file_uploader("Upload rules JSON", type=['json'], key="rules_upload")
-    if uploaded_rules:
-        try:
-            content = uploaded_rules.getvalue().decode('utf-8')
-            imported_rules = json.loads(content)
-            st.write("Preview:")
-            st.json(imported_rules)
-            if st.button("Apply Imported Rules"):
-                st.session_state.custom_rules.update(imported_rules)
-                st.success("Rules imported!")
-                st.rerun()
-        except Exception as e:
-            st.error(f"Error reading JSON: {e}")
+    st.markdown("### Import Subjects")
+    
+    import_col1, import_col2 = st.columns(2)
+    
+    with import_col1:
+        uploaded_rules = st.file_uploader("Upload subjects JSON", type=['json'], key="rules_upload")
+        if uploaded_rules:
+            try:
+                content = uploaded_rules.getvalue().decode('utf-8')
+                imported_rules = json.loads(content)
+                st.write("Preview:")
+                st.json(imported_rules)
+                if st.button("Apply Imported Rules (JSON)"):
+                    st.session_state.custom_rules.update(imported_rules)
+                    st.success("Subjects imported!")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Error reading JSON: {e}")
+    
+    with import_col2:
+        uploaded_csv = st.file_uploader("Upload subjects CSV", type=['csv'], key="rules_csv_upload")
+        if uploaded_csv:
+            try:
+                df = pd.read_csv(uploaded_csv)
+                st.write("Preview:")
+                st.dataframe(df.head(), use_container_width=True, hide_index=True)
+                if st.button("Apply Imported Rules (CSV)"):
+                    for _, row in df.iterrows():
+                        subject_name = row['subject']
+                        st.session_state.custom_rules[subject_name] = {
+                            "is_traveling": bool(row.get('is_traveling', True)),
+                            "max_periods_per_day": int(row.get('max_periods_per_day', 6)),
+                            "max_consecutive_periods": int(row.get('max_consecutive_periods', 3)),
+                            "requires_special_room": bool(row.get('requires_special_room', False)),
+                            "room_type": str(row.get('room_type', 'classroom')),
+                            "min_break_between_travel": int(row.get('min_break_between_travel', 1))
+                        }
+                    st.success(f"Imported {len(df)} subjects!")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
 
 # -----------------------------
 # TAB 4: Schedule Generator
