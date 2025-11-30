@@ -79,6 +79,36 @@ BASE_SETTINGS = {
 }
 
 # -----------------------------
+# Default Teacher Type Rules
+# -----------------------------
+DEFAULT_TEACHER_RULES = {
+    "Core (ELA/Math)": {"is_traveling": False, "max_periods_per_day": 6, "max_consecutive_periods": 3, "requires_special_room": False, "room_type": "classroom", "min_break_between_travel": 0},
+    "Science": {"is_traveling": False, "max_periods_per_day": 6, "max_consecutive_periods": 2, "requires_special_room": True, "room_type": "lab", "min_break_between_travel": 0},
+    "Gym/PE": {"is_traveling": True, "max_periods_per_day": 8, "max_consecutive_periods": 4, "requires_special_room": True, "room_type": "gym", "min_break_between_travel": 1},
+    "Art": {"is_traveling": True, "max_periods_per_day": 6, "max_consecutive_periods": 3, "requires_special_room": True, "room_type": "art", "min_break_between_travel": 1},
+    "Music": {"is_traveling": True, "max_periods_per_day": 6, "max_consecutive_periods": 3, "requires_special_room": True, "room_type": "music", "min_break_between_travel": 1},
+    "Library": {"is_traveling": True, "max_periods_per_day": 6, "max_consecutive_periods": 2, "requires_special_room": True, "room_type": "library", "min_break_between_travel": 1},
+    "Spanish/Language": {"is_traveling": True, "max_periods_per_day": 6, "max_consecutive_periods": 3, "requires_special_room": False, "room_type": "classroom", "min_break_between_travel": 1},
+    "Bible/Chapel": {"is_traveling": True, "max_periods_per_day": 5, "max_consecutive_periods": 2, "requires_special_room": False, "room_type": "classroom", "min_break_between_travel": 1},
+    "STEM/Tech": {"is_traveling": True, "max_periods_per_day": 6, "max_consecutive_periods": 2, "requires_special_room": True, "room_type": "lab", "min_break_between_travel": 1},
+}
+
+def get_teacher_type_rules(subject_name):
+    """Get teacher type rules from session state or defaults."""
+    if 'custom_rules' in st.session_state and subject_name in st.session_state.custom_rules:
+        rules = st.session_state.custom_rules[subject_name]
+        return TeacherType(
+            name=subject_name,
+            is_traveling=rules['is_traveling'],
+            max_periods_per_day=rules['max_periods_per_day'],
+            max_consecutive_periods=rules['max_consecutive_periods'],
+            requires_special_room=rules['requires_special_room'],
+            room_type=rules['room_type'],
+            min_break_between_travel=rules['min_break_between_travel']
+        )
+    return TEACHER_TYPES.get(subject_name, TEACHER_TYPES["Core (ELA/Math)"])
+
+# -----------------------------
 # Session State Initialization
 # -----------------------------
 if 'teachers' not in st.session_state:
@@ -91,6 +121,8 @@ if 'saved_schedules' not in st.session_state:
     st.session_state.saved_schedules = {}
 if 'settings' not in st.session_state:
     st.session_state.settings = BASE_SETTINGS.copy()
+if 'custom_rules' not in st.session_state:
+    st.session_state.custom_rules = {k: v.copy() for k, v in DEFAULT_TEACHER_RULES.items()}
 
 # -----------------------------
 # Helper Functions
@@ -113,9 +145,24 @@ def generate_time_slots(start_hour=8, periods=8, period_length=50, passing_time=
     return slots
 
 def generate_schedule(grades_per_campus, homerooms_per_grade, teachers_config, 
-                      periods_per_day, travel_time_periods, classes_per_week):
+                      periods_per_day, travel_time_periods, classes_per_week, custom_rules=None):
     """Generate a weekly schedule for both campuses."""
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    
+    # Helper to get teacher type with custom rules
+    def get_type_rules(type_name):
+        if custom_rules and type_name in custom_rules:
+            rules = custom_rules[type_name]
+            return TeacherType(
+                name=type_name,
+                is_traveling=rules['is_traveling'],
+                max_periods_per_day=rules['max_periods_per_day'],
+                max_consecutive_periods=rules['max_consecutive_periods'],
+                requires_special_room=rules['requires_special_room'],
+                room_type=rules['room_type'],
+                min_break_between_travel=rules['min_break_between_travel']
+            )
+        return TEACHER_TYPES.get(type_name, TEACHER_TYPES["Core (ELA/Math)"])
     
     schedule = {
         "58th Street": {day: {p: [] for p in range(1, periods_per_day + 1)} for day in days},
@@ -145,7 +192,7 @@ def generate_schedule(grades_per_campus, homerooms_per_grade, teachers_config,
         for grade in range(1, grades_per_campus + 1):
             for homeroom in range(1, homerooms_per_grade + 1):
                 for teacher in teachers_config:
-                    teacher_type = TEACHER_TYPES.get(teacher['type'], TEACHER_TYPES["Core (ELA/Math)"])
+                    teacher_type = get_type_rules(teacher['type'])
                     
                     if not teacher_type.is_traveling and teacher['home_campus'] != campus and teacher['home_campus'] != "Both (Traveling)":
                         continue
@@ -165,7 +212,7 @@ def generate_schedule(grades_per_campus, homerooms_per_grade, teachers_config,
     for class_info in classes_to_schedule:
         scheduled = False
         teacher_name = class_info['teacher_name']
-        teacher_type = TEACHER_TYPES.get(class_info['teacher_type'], TEACHER_TYPES["Core (ELA/Math)"])
+        teacher_type = get_type_rules(class_info['teacher_type'])
         homeroom = class_info['homeroom']
         campus = class_info['campus']
         
@@ -406,9 +453,10 @@ if st.sidebar.button("Reset All", use_container_width=True):
 # -----------------------------
 # Tabs
 # -----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Staffing Analysis", 
     "Teacher Configuration",
+    "Subject Rules",
     "Schedule Generator",
     "View Schedules",
     "Save/Load"
@@ -438,9 +486,70 @@ with tab1:
         options=list(TEACHER_TYPES.keys())
     )
     
-    teacher_type = TEACHER_TYPES[selected_subject]
+    teacher_type = get_teacher_type_rules(selected_subject)
     
-    st.markdown(f"**Rules for {selected_subject}:**")
+    # Editable rules section
+    st.markdown(f"**Rules for {selected_subject}:** *(Click to edit)*")
+    
+    with st.expander("Edit Rules", expanded=False):
+        edit_col1, edit_col2 = st.columns(2)
+        
+        with edit_col1:
+            new_traveling = st.checkbox(
+                "Can travel between campuses",
+                value=teacher_type.is_traveling,
+                key=f"travel_{selected_subject}"
+            )
+            new_max_periods = st.number_input(
+                "Max periods per day",
+                min_value=1, max_value=10,
+                value=teacher_type.max_periods_per_day,
+                key=f"max_periods_{selected_subject}"
+            )
+            new_max_consecutive = st.number_input(
+                "Max consecutive periods",
+                min_value=1, max_value=6,
+                value=teacher_type.max_consecutive_periods,
+                key=f"max_consec_{selected_subject}"
+            )
+        
+        with edit_col2:
+            new_special_room = st.checkbox(
+                "Requires special room",
+                value=teacher_type.requires_special_room,
+                key=f"special_room_{selected_subject}"
+            )
+            new_room_type = st.selectbox(
+                "Room type needed",
+                options=["classroom", "gym", "art", "music", "lab", "library", "chapel"],
+                index=["classroom", "gym", "art", "music", "lab", "library", "chapel"].index(teacher_type.room_type) if teacher_type.room_type in ["classroom", "gym", "art", "music", "lab", "library", "chapel"] else 0,
+                key=f"room_type_{selected_subject}"
+            )
+            new_travel_buffer = st.number_input(
+                "Buffer periods after travel",
+                min_value=0, max_value=3,
+                value=teacher_type.min_break_between_travel,
+                key=f"travel_buffer_{selected_subject}"
+            )
+        
+        if st.button("Save Rule Changes", key=f"save_rules_{selected_subject}", type="primary"):
+            st.session_state.custom_rules[selected_subject] = {
+                "is_traveling": new_traveling,
+                "max_periods_per_day": new_max_periods,
+                "max_consecutive_periods": new_max_consecutive,
+                "requires_special_room": new_special_room,
+                "room_type": new_room_type,
+                "min_break_between_travel": new_travel_buffer
+            }
+            st.success(f"Rules for {selected_subject} updated!")
+            st.rerun()
+        
+        if st.button("Reset to Default", key=f"reset_rules_{selected_subject}"):
+            st.session_state.custom_rules[selected_subject] = DEFAULT_TEACHER_RULES[selected_subject].copy()
+            st.success(f"Rules for {selected_subject} reset to defaults!")
+            st.rerun()
+    
+    # Display current rules
     rules_col1, rules_col2 = st.columns(2)
     with rules_col1:
         st.write(f"- Can travel between campuses: {'Yes' if teacher_type.is_traveling else 'No'}")
@@ -592,9 +701,143 @@ with tab2:
             st.rerun()
 
 # -----------------------------
-# TAB 3: Schedule Generator
+# TAB 3: Subject Rules
 # -----------------------------
 with tab3:
+    st.subheader("Edit Subject/Teacher Type Rules")
+    
+    st.markdown("""
+    Customize the scheduling rules for each subject type. These rules control how teachers 
+    of each type are scheduled across both campuses.
+    """)
+    
+    # Display all rules in editable table format
+    st.markdown("### Current Rules by Subject")
+    
+    # Create a dataframe of current rules
+    rules_display = []
+    for subject, rules in st.session_state.custom_rules.items():
+        rules_display.append({
+            "Subject": subject,
+            "Can Travel": "Yes" if rules['is_traveling'] else "No",
+            "Max/Day": rules['max_periods_per_day'],
+            "Max Consecutive": rules['max_consecutive_periods'],
+            "Special Room": "Yes" if rules['requires_special_room'] else "No",
+            "Room Type": rules['room_type'],
+            "Travel Buffer": rules['min_break_between_travel']
+        })
+    
+    st.dataframe(pd.DataFrame(rules_display), use_container_width=True, hide_index=True)
+    
+    st.divider()
+    
+    # Edit individual subject rules
+    st.markdown("### Edit Rules for a Subject")
+    
+    edit_subject = st.selectbox(
+        "Select subject to edit",
+        options=list(st.session_state.custom_rules.keys()),
+        key="edit_subject_select"
+    )
+    
+    current_rules = st.session_state.custom_rules[edit_subject]
+    
+    with st.form(f"edit_rules_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            edit_traveling = st.checkbox(
+                "Can travel between campuses",
+                value=current_rules['is_traveling']
+            )
+            edit_max_periods = st.number_input(
+                "Max periods per day",
+                min_value=1, max_value=10,
+                value=current_rules['max_periods_per_day']
+            )
+            edit_max_consecutive = st.number_input(
+                "Max consecutive periods",
+                min_value=1, max_value=6,
+                value=current_rules['max_consecutive_periods']
+            )
+        
+        with col2:
+            edit_special_room = st.checkbox(
+                "Requires special room",
+                value=current_rules['requires_special_room']
+            )
+            edit_room_type = st.selectbox(
+                "Room type needed",
+                options=["classroom", "gym", "art", "music", "lab", "library", "chapel"],
+                index=["classroom", "gym", "art", "music", "lab", "library", "chapel"].index(current_rules['room_type']) if current_rules['room_type'] in ["classroom", "gym", "art", "music", "lab", "library", "chapel"] else 0
+            )
+            edit_travel_buffer = st.number_input(
+                "Buffer periods after travel",
+                min_value=0, max_value=3,
+                value=current_rules['min_break_between_travel']
+            )
+        
+        submit_col1, submit_col2 = st.columns(2)
+        with submit_col1:
+            if st.form_submit_button("Save Changes", type="primary", use_container_width=True):
+                st.session_state.custom_rules[edit_subject] = {
+                    "is_traveling": edit_traveling,
+                    "max_periods_per_day": edit_max_periods,
+                    "max_consecutive_periods": edit_max_consecutive,
+                    "requires_special_room": edit_special_room,
+                    "room_type": edit_room_type,
+                    "min_break_between_travel": edit_travel_buffer
+                }
+                st.success(f"Rules for {edit_subject} saved!")
+                st.rerun()
+        
+        with submit_col2:
+            if st.form_submit_button("Reset to Default", use_container_width=True):
+                st.session_state.custom_rules[edit_subject] = DEFAULT_TEACHER_RULES[edit_subject].copy()
+                st.success(f"Rules for {edit_subject} reset to defaults!")
+                st.rerun()
+    
+    st.divider()
+    
+    # Reset all rules
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Reset ALL Rules to Defaults", type="secondary", use_container_width=True):
+            st.session_state.custom_rules = {k: v.copy() for k, v in DEFAULT_TEACHER_RULES.items()}
+            st.success("All rules reset to defaults!")
+            st.rerun()
+    
+    with col2:
+        # Export rules as JSON
+        rules_json = json.dumps(st.session_state.custom_rules, indent=2)
+        st.download_button(
+            "Download Rules (JSON)",
+            data=rules_json,
+            file_name="cca_subject_rules.json",
+            mime="application/json",
+            use_container_width=True
+        )
+    
+    # Import rules
+    st.markdown("### Import Custom Rules")
+    uploaded_rules = st.file_uploader("Upload rules JSON", type=['json'], key="rules_upload")
+    if uploaded_rules:
+        try:
+            content = uploaded_rules.getvalue().decode('utf-8')
+            imported_rules = json.loads(content)
+            st.write("Preview:")
+            st.json(imported_rules)
+            if st.button("Apply Imported Rules"):
+                st.session_state.custom_rules.update(imported_rules)
+                st.success("Rules imported!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Error reading JSON: {e}")
+
+# -----------------------------
+# TAB 4: Schedule Generator
+# -----------------------------
+with tab4:
     st.subheader("Generate Weekly Schedule")
     
     if not st.session_state.teachers:
@@ -623,7 +866,8 @@ with tab3:
                     teachers_config=st.session_state.teachers,
                     periods_per_day=periods_per_day,
                     travel_time_periods=travel_buffer_periods,
-                    classes_per_week=classes_per_week
+                    classes_per_week=classes_per_week,
+                    custom_rules=st.session_state.get('custom_rules')
                 )
                 st.session_state.schedule = schedule
                 st.session_state.teacher_schedules = teacher_schedules
@@ -634,9 +878,9 @@ with tab3:
             st.success("Schedule is ready! View it in the 'View Schedules' tab.")
 
 # -----------------------------
-# TAB 4: View Schedules
+# TAB 5: View Schedules
 # -----------------------------
-with tab4:
+with tab5:
     st.subheader("Weekly Schedules")
     
     if not st.session_state.schedule:
@@ -904,9 +1148,9 @@ with tab4:
                 )
 
 # -----------------------------
-# TAB 5: Save/Load
+# TAB 6: Save/Load
 # -----------------------------
-with tab5:
+with tab6:
     st.subheader("Save and Load Schedules")
     
     st.markdown("""
