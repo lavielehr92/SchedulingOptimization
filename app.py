@@ -139,6 +139,8 @@ if 'schedule' not in st.session_state:
     st.session_state.schedule = None
 if 'teacher_schedules' not in st.session_state:
     st.session_state.teacher_schedules = {}
+if 'unscheduled_classes' not in st.session_state:
+    st.session_state.unscheduled_classes = []
 if 'saved_schedules' not in st.session_state:
     st.session_state.saved_schedules = {}
 if 'settings' not in st.session_state:
@@ -235,6 +237,9 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
     
     classes_to_schedule.sort(key=lambda x: (x['priority'], x['homeroom']))
     
+    # Track unscheduled classes
+    unscheduled_classes = []
+    
     for class_info in classes_to_schedule:
         scheduled = False
         teacher_name = class_info['teacher_name']
@@ -293,8 +298,13 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
                 teacher_schedules[teacher_name][day][period] = assignment
                 grade_schedules[campus][homeroom][day][period] = assignment
                 scheduled = True
+        
+        # Track if class couldn't be scheduled
+        if not scheduled:
+            unscheduled_classes.append(class_info)
     
-    return schedule, teacher_schedules
+    # Return schedule info along with any unscheduled classes
+    return schedule, teacher_schedules, unscheduled_classes
 
 def schedule_to_dataframe(schedule, teacher_schedules, periods_per_day, period_length):
     """Convert schedule to a DataFrame for export."""
@@ -468,6 +478,7 @@ if st.sidebar.button("Load Base Estimate", use_container_width=True, type="prima
     st.session_state.settings = BASE_SETTINGS.copy()
     st.session_state.schedule = None
     st.session_state.teacher_schedules = {}
+    st.session_state.unscheduled_classes = []
     st.rerun()
 
 if st.sidebar.button("Reset All", use_container_width=True):
@@ -475,6 +486,7 @@ if st.sidebar.button("Reset All", use_container_width=True):
     st.session_state.settings = BASE_SETTINGS.copy()
     st.session_state.schedule = None
     st.session_state.teacher_schedules = {}
+    st.session_state.unscheduled_classes = []
     st.rerun()
 
 # -----------------------------
@@ -1013,7 +1025,7 @@ with tab4:
         
         if st.button("Generate Schedule", type="primary", use_container_width=True):
             with st.spinner("Generating optimized schedule..."):
-                schedule, teacher_schedules = generate_schedule(
+                schedule, teacher_schedules, unscheduled = generate_schedule(
                     campuses=CAMPUSES,
                     homerooms_per_grade=homerooms_per_grade,
                     teachers_config=st.session_state.teachers,
@@ -1024,11 +1036,32 @@ with tab4:
                 )
                 st.session_state.schedule = schedule
                 st.session_state.teacher_schedules = teacher_schedules
-                st.success("Schedule generated successfully!")
+                st.session_state.unscheduled_classes = unscheduled
+                
+                if not unscheduled:
+                    st.success("✅ Schedule generated successfully! All classes scheduled.")
+                else:
+                    st.warning(f"⚠️ Schedule generated with conflicts: {len(unscheduled)} class(es) could not be scheduled.")
                 st.rerun()
         
         if st.session_state.schedule:
-            st.success("Schedule is ready! View it in the 'View Schedules' tab.")
+            unscheduled = st.session_state.get('unscheduled_classes', [])
+            if unscheduled:
+                st.warning(f"⚠️ **{len(unscheduled)} class(es) could not be scheduled.** Consider:")
+                st.markdown("""
+- Adding more teachers
+- Increasing periods per day
+- Reducing classes per week per homeroom
+- Adjusting teacher rules (max periods, travel constraints)
+""")
+                with st.expander("View Unscheduled Classes", expanded=False):
+                    unscheduled_df = pd.DataFrame(unscheduled)
+                    if not unscheduled_df.empty:
+                        unscheduled_df = unscheduled_df[['campus', 'grade', 'homeroom', 'teacher_name', 'teacher_type']]
+                        unscheduled_df.columns = ['Campus', 'Grade', 'Homeroom', 'Teacher', 'Subject']
+                        st.dataframe(unscheduled_df, use_container_width=True)
+            else:
+                st.success("✅ Schedule is ready! All classes scheduled. View it in the 'View Schedules' tab.")
 
 # -----------------------------
 # TAB 5: View Schedules
