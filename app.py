@@ -20,13 +20,35 @@ st.set_page_config(
 CAMPUSES = {
     "58th Street": {
         "address": "1939 S. 58th St. Philadelphia, PA",
-        "short": "58th St"
+        "short": "58th St",
+        "grade_start": 0,  # K
+        "grade_end": 4,    # 4th grade
+        "grade_label": "K-4"
     },
     "Baltimore Ave": {
         "address": "4109 Baltimore Ave Philadelphia, PA", 
-        "short": "Balt Ave"
+        "short": "Balt Ave",
+        "grade_start": 5,  # 5th grade
+        "grade_end": 8,    # 8th grade
+        "grade_label": "5-8"
     }
 }
+
+# Helper function to calculate grades per campus
+def get_campus_grades(campus_name: str) -> int:
+    """Returns the number of grades at a specific campus"""
+    campus = CAMPUSES[campus_name]
+    return campus["grade_end"] - campus["grade_start"] + 1
+
+def get_total_grades() -> int:
+    """Returns total number of unique grades across all campuses"""
+    return sum(get_campus_grades(c) for c in CAMPUSES.keys())
+
+def get_grade_name(grade_num: int) -> str:
+    """Returns display name for a grade number (0=K, 1=1st, etc.)"""
+    if grade_num == 0:
+        return "K"
+    return str(grade_num)
 
 # -----------------------------
 # Data Classes
@@ -144,9 +166,9 @@ def generate_time_slots(start_hour=8, periods=8, period_length=50, passing_time=
         current_minutes = end_minutes + passing_time
     return slots
 
-def generate_schedule(grades_per_campus, homerooms_per_grade, teachers_config, 
+def generate_schedule(campuses, homerooms_per_grade, teachers_config, 
                       periods_per_day, travel_time_periods, classes_per_week, custom_rules=None):
-    """Generate a weekly schedule for both campuses."""
+    """Generate a weekly schedule for both campuses with campus-specific grade ranges."""
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
     
     # Helper to get teacher type with custom rules
@@ -177,31 +199,35 @@ def generate_schedule(grades_per_campus, homerooms_per_grade, teachers_config,
             day: {p: None for p in range(1, periods_per_day + 1)} for day in days
         }
     
-    for campus in ["58th Street", "Baltimore Ave"]:
-        grade_schedules[campus] = {}
-        for grade in range(1, grades_per_campus + 1):
+    # Initialize grade schedules using campus-specific grade ranges
+    for campus_name, campus_info in campuses.items():
+        grade_schedules[campus_name] = {}
+        for grade in range(campus_info['grade_start'], campus_info['grade_end'] + 1):
             for homeroom in range(1, homerooms_per_grade + 1):
-                hr_key = f"{grade}-{homeroom}"
-                grade_schedules[campus][hr_key] = {
+                grade_label = get_grade_name(grade)
+                hr_key = f"{grade_label}-{homeroom}"
+                grade_schedules[campus_name][hr_key] = {
                     day: {p: None for p in range(1, periods_per_day + 1)} for day in days
                 }
     
     classes_to_schedule = []
     
-    for campus in ["58th Street", "Baltimore Ave"]:
-        for grade in range(1, grades_per_campus + 1):
+    # Build class list using campus-specific grade ranges
+    for campus_name, campus_info in campuses.items():
+        for grade in range(campus_info['grade_start'], campus_info['grade_end'] + 1):
             for homeroom in range(1, homerooms_per_grade + 1):
                 for teacher in teachers_config:
                     teacher_type = get_type_rules(teacher['type'])
                     
-                    if not teacher_type.is_traveling and teacher['home_campus'] != campus and teacher['home_campus'] != "Both (Traveling)":
+                    if not teacher_type.is_traveling and teacher['home_campus'] != campus_name and teacher['home_campus'] != "Both (Traveling)":
                         continue
                     
+                    grade_label = get_grade_name(grade)
                     for class_num in range(classes_per_week):
                         classes_to_schedule.append({
-                            "campus": campus,
-                            "grade": f"Grade {grade}",
-                            "homeroom": f"{grade}-{homeroom}",
+                            "campus": campus_name,
+                            "grade": f"Grade {grade_label}",
+                            "homeroom": f"{grade_label}-{homeroom}",
                             "teacher_type": teacher['type'],
                             "teacher_name": teacher['name'],
                             "priority": class_num
@@ -339,25 +365,26 @@ st.markdown("### Cornerstone Christian Academy")
 # Campus info
 col1, col2 = st.columns(2)
 with col1:
-    st.info(f"**58th Street Campus**\n\n{CAMPUSES['58th Street']['address']}")
+    campus_58 = CAMPUSES['58th Street']
+    grades_58 = get_campus_grades('58th Street')
+    st.info(f"**58th Street Campus ({campus_58['grade_label']})**\n\n{campus_58['address']}\n\n*{grades_58} grades*")
 with col2:
-    st.info(f"**Baltimore Ave Campus**\n\n{CAMPUSES['Baltimore Ave']['address']}")
+    campus_balt = CAMPUSES['Baltimore Ave']
+    grades_balt = get_campus_grades('Baltimore Ave')
+    st.info(f"**Baltimore Ave Campus ({campus_balt['grade_label']})**\n\n{campus_balt['address']}\n\n*{grades_balt} grades*")
 
 # -----------------------------
 # Sidebar Inputs
 # -----------------------------
 st.sidebar.header("School Structure")
 
-grades = st.sidebar.number_input(
-    "Number of grades (K-8 is 9)", 
-    min_value=1, max_value=12, 
-    value=st.session_state.settings.get('grades', 9), 
-    step=1
-)
-st.session_state.settings['grades'] = grades
+# Display total grades (read-only since it's campus-dependent)
+total_grades = get_total_grades()
+st.sidebar.markdown(f"**Total Grades:** {total_grades} (K-8)")
+st.sidebar.caption("58th St: K-4 (5 grades) | Balt Ave: 5-8 (4 grades)")
 
 homerooms_per_grade = st.sidebar.number_input(
-    "Homerooms per grade (per campus)",
+    "Homerooms per grade",
     min_value=1, max_value=10,
     value=st.session_state.settings.get('homerooms_per_grade', 2),
     step=1,
@@ -468,14 +495,17 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.subheader("School and Demand Summary")
     
-    total_homerooms = grades * homerooms_per_grade * 2
+    # Calculate totals using campus-specific grade counts
+    homerooms_58th = get_campus_grades('58th Street') * homerooms_per_grade
+    homerooms_balt = get_campus_grades('Baltimore Ave') * homerooms_per_grade
+    total_homerooms = homerooms_58th + homerooms_balt
     total_students_est = total_homerooms * avg_class_size
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Grades", f"{grades}")
+    c1.metric("Total Grades", f"{total_grades}")
     c2.metric("Estimated Students (Both)", f"{total_students_est:,}")
     c3.metric("Total Homerooms", f"{total_homerooms}")
-    c4.metric("Homerooms per Campus", f"{total_homerooms // 2}")
+    c4.metric("58th St / Balt Ave", f"{homerooms_58th} / {homerooms_balt}")
     
     st.divider()
     
@@ -968,7 +998,7 @@ with tab4:
     else:
         st.markdown(f"""
 **Schedule Parameters:**
-- Grades: {grades} | Homerooms per grade: {homerooms_per_grade} per campus
+- Total Grades: {total_grades} (58th St: K-4, Balt Ave: 5-8) | Homerooms per grade: {homerooms_per_grade}
 - Periods per day: {periods_per_day} | Period length: {period_length} minutes
 - Specials per homeroom per week: {classes_per_week}
 - Travel time between campuses: {travel_time} minutes
@@ -984,7 +1014,7 @@ with tab4:
         if st.button("Generate Schedule", type="primary", use_container_width=True):
             with st.spinner("Generating optimized schedule..."):
                 schedule, teacher_schedules = generate_schedule(
-                    grades_per_campus=grades,
+                    campuses=CAMPUSES,
                     homerooms_per_grade=homerooms_per_grade,
                     teachers_config=st.session_state.teachers,
                     periods_per_day=periods_per_day,
