@@ -88,7 +88,6 @@ BASE_TEACHERS = [
 ]
 
 BASE_SETTINGS = {
-    "grades": 9,
     "homerooms_per_grade": 2,
     "avg_class_size": 18,
     "classes_per_week": 2,
