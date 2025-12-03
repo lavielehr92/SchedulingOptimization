@@ -4,6 +4,7 @@ import pandas as pd
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional
 import json
+import copy
 from datetime import datetime
 import io
 
@@ -473,7 +474,7 @@ st.sidebar.divider()
 st.sidebar.header("Quick Actions")
 
 if st.sidebar.button("Load Base Estimate", use_container_width=True, type="primary"):
-    st.session_state.teachers = BASE_TEACHERS.copy()
+    st.session_state.teachers = copy.deepcopy(BASE_TEACHERS)
     st.session_state.settings = BASE_SETTINGS.copy()
     st.session_state.schedule = None
     st.session_state.teacher_schedules = {}
