@@ -109,12 +109,12 @@ BASE_SETTINGS = {
     "classes_per_week": 2,
     "period_length": 50,
     "periods_per_day": 8,
-    "full_time_load": 1000,
+    "full_time_load": 1500,  # Increased to allow ~30 periods/week (realistic full-time)
     "tipping_min": 12000,
     "travel_time": 10,
     "travel_buffer_periods": 1,
     "max_switches_per_day": 2,
-    "max_switches_per_week": 6
+    "max_switches_per_week": 10  # Increased to allow 2 switches/day × 5 days
 }
 
 # -----------------------------
