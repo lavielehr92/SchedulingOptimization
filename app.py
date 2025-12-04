@@ -109,7 +109,7 @@ BASE_SETTINGS = {
     "classes_per_week": 2,
     "period_length": 50,
     "periods_per_day": 8,
-    "full_time_load": 1000,  # Optimal teacher load
+    "full_time_load": 1250,  # 1200-1300 min = threshold for adding new teacher
     "tipping_min": 12000,
     "travel_time": 10,
     "travel_buffer_periods": 1,
