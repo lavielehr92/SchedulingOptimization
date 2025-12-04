@@ -393,128 +393,106 @@ total_grades = get_total_grades()
 st.sidebar.markdown(f"**Total Grades:** {total_grades} (K-8)")
 st.sidebar.caption("58th St: K-4 (5 grades) | Balt Ave: 5-8 (4 grades)")
 
-# Sync settings to individual session state keys for proper widget binding
-if 'homerooms_per_grade' not in st.session_state:
-    st.session_state.homerooms_per_grade = st.session_state.settings.get('homerooms_per_grade', 2)
-if 'avg_class_size' not in st.session_state:
-    st.session_state.avg_class_size = st.session_state.settings.get('avg_class_size', 18)
-if 'classes_per_week' not in st.session_state:
-    st.session_state.classes_per_week = st.session_state.settings.get('classes_per_week', 2)
-if 'period_length' not in st.session_state:
-    st.session_state.period_length = st.session_state.settings.get('period_length', 50)
-if 'periods_per_day' not in st.session_state:
-    st.session_state.periods_per_day = st.session_state.settings.get('periods_per_day', 8)
-if 'full_time_load' not in st.session_state:
-    st.session_state.full_time_load = st.session_state.settings.get('full_time_load', 1000)
-if 'tipping_min' not in st.session_state:
-    st.session_state.tipping_min = st.session_state.settings.get('tipping_min', 12000)
-if 'travel_time' not in st.session_state:
-    st.session_state.travel_time = st.session_state.settings.get('travel_time', 10)
-if 'travel_buffer_periods' not in st.session_state:
-    st.session_state.travel_buffer_periods = st.session_state.settings.get('travel_buffer_periods', 1)
+# Check if we need to load base estimate (flag set before widgets)
+if st.session_state.get('_load_base', False):
+    st.session_state._load_base = False
+    st.session_state.settings = BASE_SETTINGS.copy()
+
+if st.session_state.get('_reset_all', False):
+    st.session_state._reset_all = False
+    st.session_state.settings = BASE_SETTINGS.copy()
 
 homerooms_per_grade = st.sidebar.number_input(
     "Homerooms per grade",
     min_value=1, max_value=10,
-    key="homerooms_per_grade",
+    value=st.session_state.settings.get('homerooms_per_grade', 2),
     step=1,
 )
+st.session_state.settings['homerooms_per_grade'] = homerooms_per_grade
 
 avg_class_size = st.sidebar.number_input(
     "Average students per homeroom",
     min_value=5, max_value=30,
-    key="avg_class_size",
+    value=st.session_state.settings.get('avg_class_size', 18),
     step=1,
 )
+st.session_state.settings['avg_class_size'] = avg_class_size
 
 st.sidebar.header("Instructional Model")
 
 classes_per_week = st.sidebar.number_input(
     "Special classes per week (per homeroom)",
     min_value=1, max_value=5,
-    key="classes_per_week",
+    value=st.session_state.settings.get('classes_per_week', 2),
     step=1,
 )
+st.session_state.settings['classes_per_week'] = classes_per_week
 
 period_length = st.sidebar.number_input(
     "Period length (minutes)",
     min_value=30, max_value=90,
-    key="period_length",
+    value=st.session_state.settings.get('period_length', 50),
     step=5,
 )
+st.session_state.settings['period_length'] = period_length
 
 periods_per_day = st.sidebar.number_input(
     "Periods per day",
     min_value=4, max_value=10,
-    key="periods_per_day",
+    value=st.session_state.settings.get('periods_per_day', 8),
     step=1,
 )
+st.session_state.settings['periods_per_day'] = periods_per_day
 
 full_time_load = st.sidebar.number_input(
     "Full time teaching load per week (minutes)",
     min_value=500, max_value=2000,
-    key="full_time_load",
+    value=st.session_state.settings.get('full_time_load', 1000),
     step=50,
 )
+st.session_state.settings['full_time_load'] = full_time_load
 
 tipping_min = st.sidebar.number_input(
     "Student-minute tipping point",
     min_value=8000, max_value=20000,
-    key="tipping_min",
+    value=st.session_state.settings.get('tipping_min', 12000),
     step=500,
 )
+st.session_state.settings['tipping_min'] = tipping_min
 
 st.sidebar.header("Travel")
 
 travel_time = st.sidebar.number_input(
     "Travel time between campuses (minutes)",
     min_value=0, max_value=60,
-    key="travel_time",
+    value=st.session_state.settings.get('travel_time', 10),
     step=5,
 )
+st.session_state.settings['travel_time'] = travel_time
 
 travel_buffer_periods = st.sidebar.number_input(
     "Buffer periods needed after travel",
     min_value=0, max_value=2,
-    key="travel_buffer_periods",
+    value=st.session_state.settings.get('travel_buffer_periods', 1),
     step=1,
 )
+st.session_state.settings['travel_buffer_periods'] = travel_buffer_periods
 
 # Quick actions in sidebar
 st.sidebar.divider()
 st.sidebar.header("Quick Actions")
 
 if st.sidebar.button("Load Base Estimate", use_container_width=True, type="primary"):
+    st.session_state._load_base = True
     st.session_state.teachers = copy.deepcopy(BASE_TEACHERS)
-    st.session_state.settings = BASE_SETTINGS.copy()
-    # Update individual keys for widget binding
-    st.session_state.homerooms_per_grade = BASE_SETTINGS['homerooms_per_grade']
-    st.session_state.avg_class_size = BASE_SETTINGS['avg_class_size']
-    st.session_state.classes_per_week = BASE_SETTINGS['classes_per_week']
-    st.session_state.period_length = BASE_SETTINGS['period_length']
-    st.session_state.periods_per_day = BASE_SETTINGS['periods_per_day']
-    st.session_state.full_time_load = BASE_SETTINGS['full_time_load']
-    st.session_state.tipping_min = BASE_SETTINGS['tipping_min']
-    st.session_state.travel_time = BASE_SETTINGS['travel_time']
-    st.session_state.travel_buffer_periods = BASE_SETTINGS['travel_buffer_periods']
     st.session_state.schedule = None
     st.session_state.teacher_schedules = {}
     st.session_state.unscheduled_classes = []
     st.rerun()
 
 if st.sidebar.button("Reset All", use_container_width=True):
+    st.session_state._reset_all = True
     st.session_state.teachers = []
-    st.session_state.settings = BASE_SETTINGS.copy()
-    # Update individual keys for widget binding
-    st.session_state.homerooms_per_grade = BASE_SETTINGS['homerooms_per_grade']
-    st.session_state.avg_class_size = BASE_SETTINGS['avg_class_size']
-    st.session_state.classes_per_week = BASE_SETTINGS['classes_per_week']
-    st.session_state.period_length = BASE_SETTINGS['period_length']
-    st.session_state.periods_per_day = BASE_SETTINGS['periods_per_day']
-    st.session_state.full_time_load = BASE_SETTINGS['full_time_load']
-    st.session_state.tipping_min = BASE_SETTINGS['tipping_min']
-    st.session_state.travel_time = BASE_SETTINGS['travel_time']
-    st.session_state.travel_buffer_periods = BASE_SETTINGS['travel_buffer_periods']
     st.session_state.schedule = None
     st.session_state.teacher_schedules = {}
     st.session_state.unscheduled_classes = []
