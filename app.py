@@ -79,13 +79,28 @@ TEACHER_TYPES = {
 # -----------------------------
 # Base Estimate Data (CCA Default)
 # -----------------------------
+# With 18 homerooms × 2 classes/week = 36 classes per subject (1800 min)
+# Load cap of 1000 min/week means each teacher handles ~20 periods max
+# With travel/switch constraints, need ~2 teachers per traveling subject
 BASE_TEACHERS = [
+    # Gym/PE - high max periods (8/day), can handle more load
     {"name": "Mr. Garcia", "type": "Gym/PE", "home_campus": "Both (Traveling)"},
+    {"name": "Coach Martinez", "type": "Gym/PE", "home_campus": "Both (Traveling)"},
+    # Art - 2 teachers to cover 36 classes
     {"name": "Mrs. Chen", "type": "Art", "home_campus": "Both (Traveling)"},
+    {"name": "Ms. Rivera", "type": "Art", "home_campus": "Both (Traveling)"},
+    # Music - 2 teachers to cover 36 classes
     {"name": "Mr. Williams", "type": "Music", "home_campus": "Both (Traveling)"},
+    {"name": "Mrs. Anderson", "type": "Music", "home_campus": "Both (Traveling)"},
+    # Spanish - 2 teachers to cover 36 classes
     {"name": "Mrs. Davis", "type": "Spanish/Language", "home_campus": "Both (Traveling)"},
+    {"name": "Sr. Rodriguez", "type": "Spanish/Language", "home_campus": "Both (Traveling)"},
+    # Bible/Chapel - lower max periods (5/day), needs 2 teachers
     {"name": "Pastor Johnson", "type": "Bible/Chapel", "home_campus": "Both (Traveling)"},
+    {"name": "Pastor Smith", "type": "Bible/Chapel", "home_campus": "Both (Traveling)"},
+    # Library - 2 teachers to cover 36 classes
     {"name": "Ms. Thompson", "type": "Library", "home_campus": "Both (Traveling)"},
+    {"name": "Mrs. Baker", "type": "Library", "home_campus": "Both (Traveling)"},
 ]
 
 BASE_SETTINGS = {
