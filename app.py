@@ -80,25 +80,25 @@ TEACHER_TYPES = {
 # Base Estimate Data (CCA Default)
 # -----------------------------
 # With 18 homerooms × 2 classes/week = 36 classes per subject (1800 min)
-# Load cap of 1000 min/week means each teacher handles ~20 periods max
-# With travel/switch constraints, need ~2 teachers per traveling subject
+# Load cap of 1000 min/week = 20 periods max per teacher
+# Travel cooldown is soft constraint, so 2 teachers per subject should work
 BASE_TEACHERS = [
-    # Gym/PE - high max periods (8/day), can handle more load
+    # Gym/PE - 2 teachers
     {"name": "Mr. Garcia", "type": "Gym/PE", "home_campus": "Both (Traveling)"},
     {"name": "Coach Martinez", "type": "Gym/PE", "home_campus": "Both (Traveling)"},
-    # Art - 2 teachers to cover 36 classes
+    # Art - 2 teachers
     {"name": "Mrs. Chen", "type": "Art", "home_campus": "Both (Traveling)"},
     {"name": "Ms. Rivera", "type": "Art", "home_campus": "Both (Traveling)"},
-    # Music - 2 teachers to cover 36 classes
+    # Music - 2 teachers
     {"name": "Mr. Williams", "type": "Music", "home_campus": "Both (Traveling)"},
     {"name": "Mrs. Anderson", "type": "Music", "home_campus": "Both (Traveling)"},
-    # Spanish - 2 teachers to cover 36 classes
+    # Spanish - 2 teachers
     {"name": "Mrs. Davis", "type": "Spanish/Language", "home_campus": "Both (Traveling)"},
     {"name": "Sr. Rodriguez", "type": "Spanish/Language", "home_campus": "Both (Traveling)"},
-    # Bible/Chapel - lower max periods (5/day), needs 2 teachers
+    # Bible/Chapel - 2 teachers
     {"name": "Pastor Johnson", "type": "Bible/Chapel", "home_campus": "Both (Traveling)"},
     {"name": "Pastor Smith", "type": "Bible/Chapel", "home_campus": "Both (Traveling)"},
-    # Library - 2 teachers to cover 36 classes
+    # Library - 2 teachers
     {"name": "Ms. Thompson", "type": "Library", "home_campus": "Both (Traveling)"},
     {"name": "Mrs. Baker", "type": "Library", "home_campus": "Both (Traveling)"},
 ]
@@ -109,12 +109,12 @@ BASE_SETTINGS = {
     "classes_per_week": 2,
     "period_length": 50,
     "periods_per_day": 8,
-    "full_time_load": 1500,  # Increased to allow ~30 periods/week (realistic full-time)
+    "full_time_load": 1000,  # Optimal teacher load
     "tipping_min": 12000,
     "travel_time": 10,
     "travel_buffer_periods": 1,
     "max_switches_per_day": 2,
-    "max_switches_per_week": 10  # Increased to allow 2 switches/day × 5 days
+    "max_switches_per_week": 10
 }
 
 # -----------------------------
@@ -364,23 +364,10 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
             if rooms_in_use >= max_rooms:
                 return False
         
-        # FIX #1: Check travel time cooldown
-        if teacher_type.is_traveling and travel_cooldown_periods > 0:
-            # Check if teacher needs to switch to this campus
-            # Look back for previous assignment
-            for back_p in range(period - 1, max(0, period - travel_cooldown_periods - 1), -1):
-                if back_p < 1:
-                    break
-                prev_assignment = teacher_schedules[teacher_name][day][back_p]
-                if prev_assignment:
-                    if prev_assignment['campus'] != campus:
-                        # Teacher was at different campus within cooldown window
-                        periods_since_switch = period - back_p
-                        if periods_since_switch < travel_cooldown_periods:
-                            return False
-                    break  # Found last assignment, stop looking
+        # NOTE: Travel cooldown is now a SOFT constraint (handled in score_slot)
+        # It's nice-to-have, not a hard requirement
         
-        # FIX #5: Check campus switch limits
+        # FIX #5: Check campus switch limits (still a hard constraint)
         if teacher_type.is_traveling:
             # Check if this assignment would create a new switch
             would_switch = False
@@ -415,6 +402,21 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
         score = 100  # Base score
         
         # FIX #7: Enhanced scoring for better optimization
+        
+        # SOFT CONSTRAINT: Travel cooldown preference (nice-to-have, not required)
+        if teacher_type.is_traveling and travel_cooldown_periods > 0:
+            for back_p in range(period - 1, max(0, period - travel_cooldown_periods - 1), -1):
+                if back_p < 1:
+                    break
+                prev_assignment = teacher_schedules[teacher_name][day][back_p]
+                if prev_assignment:
+                    if prev_assignment['campus'] != campus:
+                        # Teacher switching campuses without full cooldown - penalize but allow
+                        periods_since_switch = period - back_p
+                        if periods_since_switch < travel_cooldown_periods:
+                            # Penalty scales with how far under cooldown we are
+                            score -= (travel_cooldown_periods - periods_since_switch) * 15
+                    break
         
         # STRONG: Minimize campus switches (biggest penalty)
         would_switch = False
