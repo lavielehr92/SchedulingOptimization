@@ -97,7 +97,9 @@ BASE_SETTINGS = {
     "full_time_load": 1000,
     "tipping_min": 12000,
     "travel_time": 10,
-    "travel_buffer_periods": 1
+    "travel_buffer_periods": 1,
+    "max_switches_per_day": 2,
+    "max_switches_per_week": 6
 }
 
 # -----------------------------
@@ -169,9 +171,23 @@ def generate_time_slots(start_hour=8, periods=8, period_length=50, passing_time=
     return slots
 
 def generate_schedule(campuses, homerooms_per_grade, teachers_config, 
-                      periods_per_day, travel_time_periods, classes_per_week, custom_rules=None):
-    """Generate a weekly schedule for both campuses with campus-specific grade ranges."""
+                      periods_per_day, travel_time_periods, classes_per_week, custom_rules=None,
+                      period_length=50, full_time_load=1000, travel_time=10,
+                      max_switches_per_day=2, max_switches_per_week=6):
+    """Generate a weekly schedule for both campuses with campus-specific grade ranges.
+    
+    Now enforces:
+    - Travel time cooldown after campus switches
+    - Weekly teacher load caps
+    - Room availability (no double-booking special rooms)
+    - Max consecutive periods (proper backward counting)
+    - Campus switch limits per day and per week
+    """
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    
+    # Calculate travel cooldown periods
+    # ceil(travel_time / period_length) + travel_buffer_periods
+    travel_cooldown_periods = math.ceil(travel_time / period_length) + travel_time_periods if travel_time > 0 else travel_time_periods
     
     # Helper to get teacher type with custom rules
     def get_type_rules(type_name):
@@ -195,6 +211,20 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
     
     teacher_schedules = {}
     grade_schedules = {}
+    
+    # Room availability tracking: room_usage[campus][day][period][room_type] = teacher_name or None
+    room_pools = {
+        "gym": 1, "art": 1, "music": 1, "lab": 1, "library": 1, "chapel": 1,
+        "theater": 1, "computer lab": 1, "classroom": 999  # unlimited classrooms
+    }
+    room_usage = {
+        campus: {
+            day: {
+                p: {room: [] for room in room_pools.keys()}
+                for p in range(1, periods_per_day + 1)
+            } for day in days
+        } for campus in ["58th Street", "Baltimore Ave"]
+    }
     
     for teacher in teachers_config:
         teacher_schedules[teacher['name']] = {
@@ -235,6 +265,59 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
                             "priority": class_num
                         })
     
+    # Helper to get teacher's current weekly minutes
+    def get_teacher_weekly_minutes(teacher_name):
+        count = 0
+        for day in days:
+            for p in range(1, periods_per_day + 1):
+                if teacher_schedules[teacher_name][day][p] is not None:
+                    count += 1
+        return count * period_length
+    
+    # Helper to count campus switches for a teacher on a given day
+    def count_day_switches(teacher_name, day):
+        switches = 0
+        prev_campus = None
+        for p in range(1, periods_per_day + 1):
+            assignment = teacher_schedules[teacher_name][day][p]
+            if assignment:
+                if prev_campus and prev_campus != assignment['campus']:
+                    switches += 1
+                prev_campus = assignment['campus']
+        return switches
+    
+    # Helper to count campus switches for a teacher for the whole week
+    def count_week_switches(teacher_name):
+        return sum(count_day_switches(teacher_name, day) for day in days)
+    
+    # Helper to find when teacher last switched to a different campus
+    def get_last_switch_period(teacher_name, day, current_period, target_campus):
+        """Returns the period of the most recent campus switch before current_period.
+        Returns 0 if no switch occurred (teacher was at target campus or not scheduled).
+        """
+        for p in range(current_period - 1, 0, -1):
+            assignment = teacher_schedules[teacher_name][day][p]
+            if assignment:
+                if assignment['campus'] != target_campus:
+                    # Found a period where teacher was at different campus
+                    return p
+                else:
+                    # Teacher was at target campus, keep looking back
+                    continue
+            # Empty period, keep looking
+        return 0
+    
+    # Helper to check consecutive periods (proper backward counting)
+    def count_consecutive_back(teacher_name, day, period):
+        """Count consecutive assigned periods immediately before the given period."""
+        consecutive = 0
+        for p in range(period - 1, 0, -1):
+            if teacher_schedules[teacher_name][day][p] is not None:
+                consecutive += 1
+            else:
+                break  # Stop at first gap
+        return consecutive
+    
     # Helper function to check if a slot is valid for a teacher
     def is_valid_slot(teacher_name, teacher_type, campus, homeroom, day, period):
         # Check if homeroom is free
@@ -253,21 +336,60 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
         if teacher_today_count >= teacher_type.max_periods_per_day:
             return False
         
-        # Check travel constraints
-        if teacher_type.is_traveling and period > 1:
-            prev_assignment = teacher_schedules[teacher_name][day][period - 1]
-            if prev_assignment and prev_assignment['campus'] != campus:
-                if teacher_type.min_break_between_travel > 0:
+        # FIX #2: Check weekly load cap
+        current_weekly_minutes = get_teacher_weekly_minutes(teacher_name)
+        if current_weekly_minutes + period_length > full_time_load:
+            return False
+        
+        # FIX #3: Check room availability for special rooms
+        if teacher_type.requires_special_room:
+            room = teacher_type.room_type
+            rooms_in_use = len(room_usage[campus][day][period][room])
+            max_rooms = room_pools.get(room, 1)
+            if rooms_in_use >= max_rooms:
+                return False
+        
+        # FIX #1: Check travel time cooldown
+        if teacher_type.is_traveling and travel_cooldown_periods > 0:
+            # Check if teacher needs to switch to this campus
+            # Look back for previous assignment
+            for back_p in range(period - 1, max(0, period - travel_cooldown_periods - 1), -1):
+                if back_p < 1:
+                    break
+                prev_assignment = teacher_schedules[teacher_name][day][back_p]
+                if prev_assignment:
+                    if prev_assignment['campus'] != campus:
+                        # Teacher was at different campus within cooldown window
+                        periods_since_switch = period - back_p
+                        if periods_since_switch < travel_cooldown_periods:
+                            return False
+                    break  # Found last assignment, stop looking
+        
+        # FIX #5: Check campus switch limits
+        if teacher_type.is_traveling:
+            # Check if this assignment would create a new switch
+            would_switch = False
+            # Look for the most recent assignment before this period
+            for back_p in range(period - 1, 0, -1):
+                prev_assignment = teacher_schedules[teacher_name][day][back_p]
+                if prev_assignment:
+                    if prev_assignment['campus'] != campus:
+                        would_switch = True
+                    break
+            
+            if would_switch:
+                # Check day limit
+                current_day_switches = count_day_switches(teacher_name, day)
+                if current_day_switches >= max_switches_per_day:
+                    return False
+                
+                # Check week limit
+                current_week_switches = count_week_switches(teacher_name)
+                if current_week_switches >= max_switches_per_week:
                     return False
         
-        # Check consecutive periods
-        consecutive = 0
-        for p in range(max(1, period - teacher_type.max_consecutive_periods), period):
-            if teacher_schedules[teacher_name][day][p] is not None:
-                consecutive += 1
-            else:
-                consecutive = 0
-        
+        # FIX #4: Check consecutive periods (proper backward counting)
+        consecutive = count_consecutive_back(teacher_name, day, period)
         if consecutive >= teacher_type.max_consecutive_periods:
             return False
         
@@ -275,29 +397,71 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
     
     # Helper to score a slot (higher is better for optimization)
     def score_slot(teacher_name, teacher_type, campus, day, period):
-        score = 0
+        score = 100  # Base score
         
-        # Prefer slots that keep teacher at same campus (minimize travel)
-        if period > 1:
-            prev = teacher_schedules[teacher_name][day][period - 1]
-            if prev and prev['campus'] == campus:
-                score += 10  # Reward staying at same campus
+        # FIX #7: Enhanced scoring for better optimization
         
+        # STRONG: Minimize campus switches (biggest penalty)
+        would_switch = False
+        for back_p in range(period - 1, 0, -1):
+            prev_assignment = teacher_schedules[teacher_name][day][back_p]
+            if prev_assignment:
+                if prev_assignment['campus'] != campus:
+                    would_switch = True
+                    score -= 50  # Heavy penalty for switching
+                else:
+                    score += 20  # Reward for staying at same campus
+                break
+        
+        # Also check if next period is already scheduled at same campus
         if period < periods_per_day:
-            next_slot = teacher_schedules[teacher_name][day][period + 1]
-            if next_slot and next_slot['campus'] == campus:
-                score += 10
+            next_assignment = teacher_schedules[teacher_name][day][period + 1]
+            if next_assignment:
+                if next_assignment['campus'] == campus:
+                    score += 15  # Reward for matching upcoming campus
+                else:
+                    score -= 30  # Penalty if would create sandwich switch
         
-        # Prefer filling days evenly
+        # Spread load across week (avoid overloading days)
         teacher_today_count = sum(
             1 for p in range(1, periods_per_day + 1)
             if teacher_schedules[teacher_name][day][p] is not None
         )
-        score -= teacher_today_count * 2  # Slight penalty for already busy days
+        day_counts = []
+        for d in days:
+            day_counts.append(sum(
+                1 for p in range(1, periods_per_day + 1)
+                if teacher_schedules[teacher_name][d][p] is not None
+            ))
+        avg_per_day = sum(day_counts) / len(days) if day_counts else 0
         
-        # Prefer contiguous blocks
+        # Penalty for being above average
+        if teacher_today_count > avg_per_day:
+            score -= (teacher_today_count - avg_per_day) * 5
+        
+        # Avoid front/back loading (prefer middle periods)
+        mid_period = periods_per_day / 2
+        distance_from_mid = abs(period - mid_period)
+        score -= distance_from_mid * 2  # Slight penalty for edge periods
+        
+        # Prefer contiguous blocks (adjacent to existing assignments)
         if period > 1 and teacher_schedules[teacher_name][day][period - 1] is not None:
-            score += 5
+            prev = teacher_schedules[teacher_name][day][period - 1]
+            if prev['campus'] == campus:
+                score += 25  # Strong bonus for contiguous same-campus
+            else:
+                score += 5  # Small bonus for any adjacency
+        
+        if period < periods_per_day and teacher_schedules[teacher_name][day][period + 1] is not None:
+            next_slot = teacher_schedules[teacher_name][day][period + 1]
+            if next_slot['campus'] == campus:
+                score += 25
+            else:
+                score += 5
+        
+        # Slight preference for earlier days to ensure even spread
+        day_index = days.index(day)
+        score -= day_index * 1  # Very slight preference for earlier days
         
         return score
     
@@ -307,7 +471,9 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
         teacher_type = get_type_rules(c['teacher_type'])
         # Lower max_periods = more constrained = schedule first
         constraint_score = teacher_type.max_periods_per_day * 10 + teacher_type.max_consecutive_periods
-        return (constraint_score, c['teacher_name'], c['campus'], c['homeroom'], c['priority'])
+        # Group by campus within teacher to minimize switches
+        campus_order = 0 if c['campus'] == "58th Street" else 1
+        return (constraint_score, c['teacher_name'], campus_order, c['homeroom'], c['priority'])
     
     classes_to_schedule.sort(key=class_sort_key)
     
@@ -345,6 +511,12 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
             schedule[campus][best_day][best_period].append(assignment)
             teacher_schedules[teacher_name][best_day][best_period] = assignment
             grade_schedules[campus][homeroom][best_day][best_period] = assignment
+            
+            # Update room usage
+            if teacher_type.requires_special_room:
+                room = teacher_type.room_type
+                room_usage[campus][best_day][best_period][room].append(teacher_name)
+            
             scheduled = True
         
         # Track if class couldn't be scheduled
@@ -385,6 +557,8 @@ def save_schedule_state():
         "schedule": st.session_state.schedule,
         "teacher_schedules": st.session_state.teacher_schedules,
         "settings": st.session_state.settings,
+        "custom_rules": st.session_state.get('custom_rules', {}),
+        "unscheduled_classes": st.session_state.get('unscheduled_classes', []),
         "timestamp": datetime.now().isoformat()
     }
 
@@ -394,6 +568,11 @@ def load_schedule_state(state_data):
     st.session_state.schedule = state_data.get("schedule")
     st.session_state.teacher_schedules = state_data.get("teacher_schedules", {})
     st.session_state.settings = state_data.get("settings", BASE_SETTINGS.copy())
+    # FIX #6: Also restore custom_rules and unscheduled_classes
+    if "custom_rules" in state_data:
+        st.session_state.custom_rules = state_data["custom_rules"]
+    if "unscheduled_classes" in state_data:
+        st.session_state.unscheduled_classes = state_data["unscheduled_classes"]
 
 def teachers_to_csv():
     """Convert teachers to CSV string."""
@@ -525,6 +704,22 @@ travel_buffer_periods = st.sidebar.number_input(
     step=1,
 )
 st.session_state.settings['travel_buffer_periods'] = travel_buffer_periods
+
+max_switches_per_day = st.sidebar.number_input(
+    "Max campus switches per day",
+    min_value=0, max_value=6,
+    value=st.session_state.settings.get('max_switches_per_day', 2),
+    step=1,
+)
+st.session_state.settings['max_switches_per_day'] = max_switches_per_day
+
+max_switches_per_week = st.sidebar.number_input(
+    "Max campus switches per week",
+    min_value=0, max_value=20,
+    value=st.session_state.settings.get('max_switches_per_week', 6),
+    step=1,
+)
+st.session_state.settings['max_switches_per_week'] = max_switches_per_week
 
 # Quick actions in sidebar
 st.sidebar.divider()
@@ -1070,8 +1265,8 @@ with tab4:
 - Total Grades: {total_grades} (58th St: K-4, Balt Ave: 5-8) | Homerooms per grade: {homerooms_per_grade}
 - Periods per day: {periods_per_day} | Period length: {period_length} minutes
 - Specials per homeroom per week: {classes_per_week}
-- Travel time between campuses: {travel_time} minutes
-- Buffer periods after travel: {travel_buffer_periods}
+- Full-time load cap: {full_time_load} minutes/week
+- Travel time: {travel_time} min | Buffer: {travel_buffer_periods} periods | Max switches/day: {max_switches_per_day} | Max switches/week: {max_switches_per_week}
 """)
         
         st.markdown("**Teachers configured:**")
@@ -1089,7 +1284,12 @@ with tab4:
                     periods_per_day=periods_per_day,
                     travel_time_periods=travel_buffer_periods,
                     classes_per_week=classes_per_week,
-                    custom_rules=st.session_state.get('custom_rules')
+                    custom_rules=st.session_state.get('custom_rules'),
+                    period_length=period_length,
+                    full_time_load=full_time_load,
+                    travel_time=travel_time,
+                    max_switches_per_day=max_switches_per_day,
+                    max_switches_per_week=max_switches_per_week
                 )
                 st.session_state.schedule = schedule
                 st.session_state.teacher_schedules = teacher_schedules
