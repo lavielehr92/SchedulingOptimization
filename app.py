@@ -235,7 +235,81 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
                             "priority": class_num
                         })
     
-    classes_to_schedule.sort(key=lambda x: (x['priority'], x['homeroom']))
+    # Helper function to check if a slot is valid for a teacher
+    def is_valid_slot(teacher_name, teacher_type, campus, homeroom, day, period):
+        # Check if homeroom is free
+        if grade_schedules[campus][homeroom][day][period] is not None:
+            return False
+        
+        # Check if teacher is free
+        if teacher_schedules[teacher_name][day][period] is not None:
+            return False
+        
+        # Check max periods per day
+        teacher_today_count = sum(
+            1 for p in range(1, periods_per_day + 1)
+            if teacher_schedules[teacher_name][day][p] is not None
+        )
+        if teacher_today_count >= teacher_type.max_periods_per_day:
+            return False
+        
+        # Check travel constraints
+        if teacher_type.is_traveling and period > 1:
+            prev_assignment = teacher_schedules[teacher_name][day][period - 1]
+            if prev_assignment and prev_assignment['campus'] != campus:
+                if teacher_type.min_break_between_travel > 0:
+                    return False
+        
+        # Check consecutive periods
+        consecutive = 0
+        for p in range(max(1, period - teacher_type.max_consecutive_periods), period):
+            if teacher_schedules[teacher_name][day][p] is not None:
+                consecutive += 1
+            else:
+                consecutive = 0
+        
+        if consecutive >= teacher_type.max_consecutive_periods:
+            return False
+        
+        return True
+    
+    # Helper to score a slot (higher is better for optimization)
+    def score_slot(teacher_name, teacher_type, campus, day, period):
+        score = 0
+        
+        # Prefer slots that keep teacher at same campus (minimize travel)
+        if period > 1:
+            prev = teacher_schedules[teacher_name][day][period - 1]
+            if prev and prev['campus'] == campus:
+                score += 10  # Reward staying at same campus
+        
+        if period < periods_per_day:
+            next_slot = teacher_schedules[teacher_name][day][period + 1]
+            if next_slot and next_slot['campus'] == campus:
+                score += 10
+        
+        # Prefer filling days evenly
+        teacher_today_count = sum(
+            1 for p in range(1, periods_per_day + 1)
+            if teacher_schedules[teacher_name][day][p] is not None
+        )
+        score -= teacher_today_count * 2  # Slight penalty for already busy days
+        
+        # Prefer contiguous blocks
+        if period > 1 and teacher_schedules[teacher_name][day][period - 1] is not None:
+            score += 5
+        
+        return score
+    
+    # Sort classes to schedule teachers with most constraints first
+    # Group by teacher, then by campus to minimize travel
+    def class_sort_key(c):
+        teacher_type = get_type_rules(c['teacher_type'])
+        # Lower max_periods = more constrained = schedule first
+        constraint_score = teacher_type.max_periods_per_day * 10 + teacher_type.max_consecutive_periods
+        return (constraint_score, c['teacher_name'], c['campus'], c['homeroom'], c['priority'])
+    
+    classes_to_schedule.sort(key=class_sort_key)
     
     # Track unscheduled classes
     unscheduled_classes = []
@@ -247,57 +321,31 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
         homeroom = class_info['homeroom']
         campus = class_info['campus']
         
-        day_order = days.copy()
-        
-        for day in day_order:
-            if scheduled:
-                break
-            
+        # Find all valid slots and pick the best one
+        valid_slots = []
+        for day in days:
             for period in range(1, periods_per_day + 1):
-                if scheduled:
-                    break
-                
-                if grade_schedules[campus][homeroom][day][period] is not None:
-                    continue
-                    
-                if teacher_schedules[teacher_name][day][period] is not None:
-                    continue
-                
-                teacher_today_count = sum(
-                    1 for p in range(1, periods_per_day + 1)
-                    if teacher_schedules[teacher_name][day][p] is not None
-                )
-                if teacher_today_count >= teacher_type.max_periods_per_day:
-                    continue
-                
-                if teacher_type.is_traveling and period > 1:
-                    prev_assignment = teacher_schedules[teacher_name][day][period - 1]
-                    if prev_assignment and prev_assignment['campus'] != campus:
-                        if teacher_type.min_break_between_travel > 0:
-                            continue
-                
-                consecutive = 0
-                for p in range(max(1, period - teacher_type.max_consecutive_periods), period):
-                    if teacher_schedules[teacher_name][day][p] is not None:
-                        consecutive += 1
-                    else:
-                        consecutive = 0
-                
-                if consecutive >= teacher_type.max_consecutive_periods:
-                    continue
-                
-                assignment = {
-                    "campus": campus,
-                    "grade": class_info['grade'],
-                    "homeroom": homeroom,
-                    "teacher": teacher_name,
-                    "teacher_type": class_info['teacher_type']
-                }
-                
-                schedule[campus][day][period].append(assignment)
-                teacher_schedules[teacher_name][day][period] = assignment
-                grade_schedules[campus][homeroom][day][period] = assignment
-                scheduled = True
+                if is_valid_slot(teacher_name, teacher_type, campus, homeroom, day, period):
+                    slot_score = score_slot(teacher_name, teacher_type, campus, day, period)
+                    valid_slots.append((day, period, slot_score))
+        
+        # Sort by score (descending) and pick best
+        if valid_slots:
+            valid_slots.sort(key=lambda x: -x[2])
+            best_day, best_period, _ = valid_slots[0]
+            
+            assignment = {
+                "campus": campus,
+                "grade": class_info['grade'],
+                "homeroom": homeroom,
+                "teacher": teacher_name,
+                "teacher_type": class_info['teacher_type']
+            }
+            
+            schedule[campus][best_day][best_period].append(assignment)
+            teacher_schedules[teacher_name][best_day][best_period] = assignment
+            grade_schedules[campus][homeroom][best_day][best_period] = assignment
+            scheduled = True
         
         # Track if class couldn't be scheduled
         if not scheduled:
