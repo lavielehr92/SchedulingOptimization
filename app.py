@@ -79,28 +79,28 @@ TEACHER_TYPES = {
 # -----------------------------
 # Base Estimate Data (CCA Default)
 # -----------------------------
-# 18 homerooms × 2 classes/week × 6 subjects = 216 total classes
-# Each teacher: 1250 min cap ÷ 50 min = 25 periods max
-# With room/consecutive constraints, using 1 teacher per subject per campus
+# With 18 homerooms × 2 classes/week = 36 classes per subject (1800 min)
+# Load cap of 1000 min/week = 20 periods max per teacher
+# Travel cooldown is soft constraint, so 2 teachers per subject should work
 BASE_TEACHERS = [
-    # Gym/PE - 1 per campus
-    {"name": "Mr. Garcia", "type": "Gym/PE", "home_campus": "58th Street"},
-    {"name": "Coach Martinez", "type": "Gym/PE", "home_campus": "Baltimore Ave"},
-    # Art - 1 per campus
-    {"name": "Mrs. Chen", "type": "Art", "home_campus": "58th Street"},
-    {"name": "Ms. Rivera", "type": "Art", "home_campus": "Baltimore Ave"},
-    # Music - 1 per campus
-    {"name": "Mr. Williams", "type": "Music", "home_campus": "58th Street"},
-    {"name": "Mrs. Anderson", "type": "Music", "home_campus": "Baltimore Ave"},
-    # Spanish - 1 per campus
-    {"name": "Mrs. Davis", "type": "Spanish/Language", "home_campus": "58th Street"},
-    {"name": "Sr. Rodriguez", "type": "Spanish/Language", "home_campus": "Baltimore Ave"},
-    # Bible/Chapel - 1 per campus
-    {"name": "Pastor Johnson", "type": "Bible/Chapel", "home_campus": "58th Street"},
-    {"name": "Pastor Smith", "type": "Bible/Chapel", "home_campus": "Baltimore Ave"},
-    # Library - 1 per campus
-    {"name": "Ms. Thompson", "type": "Library", "home_campus": "58th Street"},
-    {"name": "Mrs. Baker", "type": "Library", "home_campus": "Baltimore Ave"},
+    # Gym/PE - 2 teachers
+    {"name": "Mr. Garcia", "type": "Gym/PE", "home_campus": "Both (Traveling)"},
+    {"name": "Coach Martinez", "type": "Gym/PE", "home_campus": "Both (Traveling)"},
+    # Art - 2 teachers
+    {"name": "Mrs. Chen", "type": "Art", "home_campus": "Both (Traveling)"},
+    {"name": "Ms. Rivera", "type": "Art", "home_campus": "Both (Traveling)"},
+    # Music - 2 teachers
+    {"name": "Mr. Williams", "type": "Music", "home_campus": "Both (Traveling)"},
+    {"name": "Mrs. Anderson", "type": "Music", "home_campus": "Both (Traveling)"},
+    # Spanish - 2 teachers
+    {"name": "Mrs. Davis", "type": "Spanish/Language", "home_campus": "Both (Traveling)"},
+    {"name": "Sr. Rodriguez", "type": "Spanish/Language", "home_campus": "Both (Traveling)"},
+    # Bible/Chapel - 2 teachers
+    {"name": "Pastor Johnson", "type": "Bible/Chapel", "home_campus": "Both (Traveling)"},
+    {"name": "Pastor Smith", "type": "Bible/Chapel", "home_campus": "Both (Traveling)"},
+    # Library - 2 teachers
+    {"name": "Ms. Thompson", "type": "Library", "home_campus": "Both (Traveling)"},
+    {"name": "Mrs. Baker", "type": "Library", "home_campus": "Both (Traveling)"},
 ]
 
 BASE_SETTINGS = {
@@ -266,11 +266,7 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
                 for teacher in teachers_config:
                     teacher_type = get_type_rules(teacher['type'])
                     
-                    # Teacher can teach at this campus if:
-                    # 1. They're assigned to "Both (Traveling)" OR
-                    # 2. They're assigned to this specific campus
-                    teacher_campus = teacher.get('home_campus', 'Both (Traveling)')
-                    if teacher_campus != "Both (Traveling)" and teacher_campus != campus_name:
+                    if not teacher_type.is_traveling and teacher['home_campus'] != campus_name and teacher['home_campus'] != "Both (Traveling)":
                         continue
                     
                     grade_label = get_grade_name(grade)
@@ -487,14 +483,14 @@ def generate_schedule(campuses, homerooms_per_grade, teachers_config,
         return score
     
     # Sort classes to schedule teachers with most constraints first
-    # Interleave campuses and grades to distribute load evenly
+    # Group by teacher, then by campus to minimize travel
     def class_sort_key(c):
         teacher_type = get_type_rules(c['teacher_type'])
         # Lower max_periods = more constrained = schedule first
         constraint_score = teacher_type.max_periods_per_day * 10 + teacher_type.max_consecutive_periods
-        # Interleave by priority (class 1 for all grades, then class 2 for all grades)
-        # This ensures each grade gets fair access to teacher availability
-        return (constraint_score, c['teacher_name'], c['priority'], c['homeroom'])
+        # Group by campus within teacher to minimize switches
+        campus_order = 0 if c['campus'] == "58th Street" else 1
+        return (constraint_score, c['teacher_name'], campus_order, c['homeroom'], c['priority'])
     
     classes_to_schedule.sort(key=class_sort_key)
     
@@ -981,9 +977,9 @@ with tab2:
                 "Name": t['name'],
                 "Type": t['type'],
                 "Home Campus": t['home_campus'],
-                "Can Travel": "Yes" if TEACHER_TYPES[t['type']].is_traveling else "No",
-                "Max/Day": TEACHER_TYPES[t['type']].max_periods_per_day,
-                "Room Needed": TEACHER_TYPES[t['type']].room_type
+                "Can Travel": "Yes" if st.session_state.custom_rules.get(t['type'], {}).get('is_traveling', True) else "No",
+                "Max/Day": st.session_state.custom_rules.get(t['type'], {}).get('max_periods_per_day', 6),
+                "Room Needed": st.session_state.custom_rules.get(t['type'], {}).get('room_type', 'classroom')
             }
             for t in st.session_state.teachers
         ])
